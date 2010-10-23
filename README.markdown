@@ -15,6 +15,9 @@ Features
 *   Automatically save a new version whenever your model changes using Django's
     flexible signalling framework.
 *   Automate your revision management with easy-to-use middleware.
+*   jonozzz: Differentiate between additions, changes and deletions.
+*   jonozzz: Correctly serialize/deserialize inherited models.
+*   jonozzz: Sample code to build diff between stored versions.
 
 **django-reversion** can be easily added to your existing Django project with an
 absolute minimum of code changes.
