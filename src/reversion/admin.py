@@ -151,11 +151,7 @@ class VersionAdmin(admin.ModelAdmin):
                 formset = FormSet(request.POST, request.FILES,
                                   instance=new_object, prefix=prefix,
                                   queryset=inline.queryset(request))
-                # Strip extra empty forms from the formset.
-                num_forms = formset.total_form_count() - formset.extra
-                del formset.forms[num_forms:]
-                formset.total_form_count = lambda: num_forms
-                # Add this hacked formset to the form.
+                
                 formsets.append(formset)
             if all_valid(formsets) and form_validated:
                 self.save_model(request, new_object, form, change=True)
@@ -216,17 +212,13 @@ class VersionAdmin(admin.ModelAdmin):
                 # Add this hacked formset to the form.
                 formsets.append(formset)
         # Generate admin form helper.
-        adminForm = helpers.AdminForm(form, self.get_fieldsets(request, obj),
-            self.prepopulated_fields, self.get_readonly_fields(request, obj),
-            model_admin=self)
+        adminForm = helpers.AdminForm(form, self.get_fieldsets(request, obj), self.prepopulated_fields)
         media = self.media + adminForm.media
         # Generate formset helpers.
         inline_admin_formsets = []
         for inline, formset in zip(self.inline_instances, formsets):
             fieldsets = list(inline.get_fieldsets(request, obj))
-            readonly = list(inline.get_readonly_fields(request, obj))
-            inline_admin_formset = helpers.InlineAdminFormSet(inline, formset,
-                fieldsets, readonly, model_admin=self)
+            inline_admin_formset = helpers.InlineAdminFormSet(inline, formset, fieldsets)
             inline_admin_formsets.append(inline_admin_formset)
             media = media + inline_admin_formset.media
         # Generate the context.

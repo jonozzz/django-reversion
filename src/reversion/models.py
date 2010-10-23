@@ -1,18 +1,26 @@
 """Database models used by Reversion."""
 
 
+from django.contrib.admin.models import ADDITION, CHANGE, DELETION
 from django.contrib.auth.models import User
 from django.contrib.contenttypes.models import ContentType
 from django.core import serializers
 from django.db import models
 
 import reversion
-from reversion.managers import VersionManager
+from reversion.managers import VersionManager, RevisionManager
 
+ACTIONS = (
+    (ADDITION, 'Add'),
+    (CHANGE, 'Change'),
+    (DELETION, 'Delete'),
+)
 
 class Revision(models.Model):
     
     """A group of related object versions."""
+    
+    objects = RevisionManager()
     
     date_created = models.DateTimeField(auto_now_add=True,
                                         help_text="The date and time this revision was created.")
@@ -43,7 +51,7 @@ class Revision(models.Model):
             
     def __unicode__(self):
         """Returns a unicode representation."""
-        return u", ".join([unicode(version)
+        return u", ".join(["%s:%s" % (version, version.get_action_flag_display())
                            for version in self.version_set.all()])
             
 
@@ -56,7 +64,8 @@ class Version(models.Model):
     revision = models.ForeignKey(Revision,
                                  help_text="The revision that contains this version.")
     
-    object_id = models.TextField(help_text="Primary key of the model under version control.")
+    object_id = models.IntegerField(help_text="Primary key of the model under version control.",
+                                    db_index=True)
     
     content_type = models.ForeignKey(ContentType,
                                      help_text="Content type of the model under version control.")
@@ -67,13 +76,42 @@ class Version(models.Model):
     serialized_data = models.TextField(help_text="The serialized form of this version of the model.")
     
     object_repr = models.TextField(help_text="A string representation of the object.")
+
+    action_flag = models.PositiveSmallIntegerField(choices=ACTIONS, help_text="The action that describes this version.")
     
+    
+    def is_addition(self):
+        return self.action_flag == ADDITION
+
+    def is_change(self):
+        return self.action_flag == CHANGE
+
+    def is_deletion(self):
+        return self.action_flag == DELETION
+ 
     def get_object_version(self):
         """Returns the stored version of the model."""
         data = self.serialized_data
+
         if isinstance(data, unicode):
             data = data.encode("utf8")
-        return list(serializers.deserialize(self.format, data))[0]
+        if self.format == 'python' and isinstance(data, basestring):
+            import datetime
+            data = eval(data)
+        
+        do = list(serializers.deserialize(self.format, data))
+        
+        # Sort descending by the number of parents to correctly reconstruct
+        # inherited models.
+        do.sort(lambda x,y: cmp(len(y.object._meta.parents.keys()), 
+                                len(x.object._meta.parents.keys())))
+
+        head = do[0]
+        
+        for dobj in do[1:]:
+            head.object.__dict__.update(dobj.object.__dict__)
+
+        return head
     
     object_version = property(get_object_version,
                               doc="The stored version of the model.")
@@ -112,13 +150,15 @@ class Version(models.Model):
        
     field_dict = property(get_field_dict,
                           doc="A dictionary mapping field names to field values in this version of the model.")
-       
+
     def revert(self):
         """Recovers the model in this version."""
         self.object_version.save()
         
+    def __repr__(self):
+        """Returns a unicode representation."""
+        return "%s" % (self.object_repr)
+
     def __unicode__(self):
         """Returns a unicode representation."""
-        return self.object_repr
-    
-    
+        return "%s" % (self.object_repr)
