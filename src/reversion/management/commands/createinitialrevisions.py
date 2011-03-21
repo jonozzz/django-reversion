@@ -1,4 +1,4 @@
-import sys
+from optparse import make_option
 
 from django import VERSION
 from django.core.exceptions import ImproperlyConfigured
@@ -7,24 +7,24 @@ from django.core.management.base import CommandError
 from django.db import models
 from django.utils.importlib import import_module
 from django.utils.datastructures import SortedDict
-from django.utils.translation import ugettext as _
 
 from reversion import revision
 from reversion.models import Version
 
 
 class Command(BaseCommand):
-    
-    args = "[appname, appname.ModelName, ...]"
+    option_list = BaseCommand.option_list + (
+        make_option("--comment",
+            action="store",
+            dest="comment",
+            default=u"Initial version.",
+            help='Specify the comment to add to the revisions. Defaults to "Initial version.".'),
+        )    
+    args = '[appname, appname.ModelName, ...] [--comment="Initial version."]'
     help = "Creates initial revisions for a given app [and model]."
 
-    def __init__(self, *args, **kwargs):
-        super(Command, self).__init__(*args, **kwargs)
-        # Be safe for future django versions.
-        if VERSION[0] == 1 and VERSION[1] <= 2:
-            self.stdout = sys.stdout
-
     def handle(self, *app_labels, **options):
+        comment = options["comment"]
         app_list = SortedDict()
         # if no apps given, use all installed.
         if len(app_labels) == 0:
@@ -64,18 +64,18 @@ class Command(BaseCommand):
                     except ImproperlyConfigured:
                         raise CommandError("Unknown application: %s" % app_label)
         # Create revisions.
-        for app, model_classes in app_list.items ():
+        for app, model_classes in app_list.items():
             for model_class in model_classes:
-                self.create_initial_revisions (app, model_class)
+                self.create_initial_revisions(app, model_class, comment)
 
     @revision.create_on_success
-    def version_save(self, obj):
+    def version_save(self, obj, comment):
         """Saves the initial version of an object."""
         obj.save()
         revision.user = None
-        revision.comment = _(u"Initial version.")
+        revision.comment = comment
 
-    def create_initial_revisions(self, app, model_class, verbosity=2, **kwargs):
+    def create_initial_revisions(self, app, model_class, comment, verbosity=2, **kwargs):
         """Creates the set of initial revisions for the given model."""
         # Import the relevant admin module.
         try:
@@ -89,11 +89,15 @@ class Command(BaseCommand):
             # between unicode object_ids and integer pks on strict backends like postgres.
             for obj in model_class._default_manager.iterator():
                 if Version.objects.get_for_object(obj).count() == 0:
-                    self.version_save(obj)
+                    try:
+                        self.version_save(obj, comment)
+                    except:
+                        print "ERROR: Could not save initial version for %s %s." % (model_class.__name__, obj.pk)
+                        raise
                     created_count += 1
             # Print out a message, if feeling verbose.
             if created_count > 0 and verbosity >= 2:
-                self.stdout.write(u"Created %s initial revisions for model %s.\n" % (created_count, model_class._meta.verbose_name))
+                print u"Created %s initial revisions for model %s." % (created_count, model_class._meta.verbose_name)
         else:
             if verbosity >= 2:
-                self.stdout.write(u"Model %s is not registered.\n"  % (model_class._meta.verbose_name))
+                print u"Model %s is not registered."  % (model_class._meta.verbose_name)

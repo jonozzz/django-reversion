@@ -2,8 +2,9 @@
 try:
     from functools import wraps
 except ImportError:
-    from django.utils.functional import wraps  # Python 2.3, 2.4 fallback.
+    from django.utils.functional import wraps  # Python 2.4 fallback.
 
+import operator
 from threading import local
 import copy
 
@@ -12,23 +13,13 @@ from django.contrib.contenttypes.models import ContentType
 from django.core import serializers
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
+from django.db.models import Q, Max
 from django.db.models.query import QuerySet
 from django.db.models.signals import post_save, pre_delete, pre_save, post_init
 
-from reversion.models import Revision, Version
+from reversion.errors import RevisionManagementError, RegistrationError
+from reversion.models import Revision, Version, VERSION_ADD, VERSION_CHANGE, VERSION_DELETE
 from reversion.storage import VersionFileStorageWrapper
-
-
-class RevisionManagementError(Exception):
-    
-    """
-    Exception that is thrown when something goes wrong with revision managment.
-    """
-    
-
-class RegistrationError(Exception):
-    
-    """Exception thrown when registration with Reversion goes wrong."""
 
 
 class RegistrationInfo(object):
@@ -50,7 +41,7 @@ class RegistrationInfo(object):
         else:
             raise ValueError, follow
         self.format = format
-          
+
           
 class RevisionState(local):
     
@@ -249,7 +240,7 @@ class RevisionManager(object):
         """Adds a class of meta information to the current revision."""
         self.assert_active()
         self._state.meta.append((cls, kwargs))
-        
+    
     def invalidate(self):
         """Marks this revision as broken, so should not be commited."""
         self.assert_active()
@@ -269,7 +260,7 @@ class RevisionManager(object):
         result_set = set()
         def _follow_relationships(obj, level = 0):
             # Prevent recursion.
-            if obj in result_set:
+            if obj in result_dict or obj.pk is None:  # This last condition is because during a delete action the parent field for a subclassing model will be set to None.
                 return
             if inclusive or level > 0:
                 result_set.add(obj)
@@ -414,7 +405,15 @@ class RevisionManager(object):
     def post_save_receiver(self, instance, sender, **kwargs):
         """Adds registered models to the current revision, if any."""
         if self.is_active():
-            self.add(instance)
+            if created:
+                self.add(instance, VERSION_ADD)
+            else:
+                self.add(instance, VERSION_CHANGE)
+            
+    def pre_delete_receiver(self, instance, **kwargs):
+        """Adds registerted models to the current revision, if any."""
+        if self.is_active():
+            self.add(instance, VERSION_DELETE)
        
     def pre_delete_receiver(self, instance, sender, **kwargs):
         """
@@ -448,7 +447,7 @@ class RevisionManager(object):
         return False
         
     def create_on_success(self, func):
-        """Creates a revision when the given function exist successfully."""
+        """Creates a revision when the given function exits successfully."""
         def _create_on_success(*args, **kwargs):
             self.start()
             try:
@@ -465,4 +464,3 @@ class RevisionManager(object):
         
 # A thread-safe shared revision manager.
 revision = RevisionManager()
-

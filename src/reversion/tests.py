@@ -13,7 +13,7 @@ from django.db import models, transaction
 from django.test import TestCase
 
 import reversion
-from reversion.models import Version, Revision
+from reversion.models import Version, Revision, VERSION_ADD, VERSION_CHANGE, VERSION_DELETE
 from reversion.revisions import RegistrationError, DEFAULT_SERIALIZATION_FORMAT
 
 
@@ -101,8 +101,9 @@ class ReversionCreateTest(TestCase):
         # Create the second revision.
         try:
             with reversion.revision:
-                test.name = None
+                test.name = "test1.1"
                 test.save()
+                raise Exception()
         except:
             transaction.rollback()
         # Check that there is still only one revision.
@@ -187,6 +188,15 @@ class ReversionQueryTest(TestCase):
         Version.objects.get_deleted(TestModel)[0].revert()
         # Ensure recovered.
         self.assertEqual(TestModel.objects.get().name, "test1.2")
+    
+    def testCanGenerateStatistics(self):
+        """Tests that the stats are accurate for Version models."""
+        self.assertEqual(Version.objects.filter(type=VERSION_ADD).count(), 1)
+        self.assertEqual(Version.objects.filter(type=VERSION_CHANGE).count(), 2)
+        self.assertEqual(Version.objects.filter(type=VERSION_DELETE).count(), 0)
+        with reversion.revision:
+            self.test.delete()
+        self.assertEqual(Version.objects.filter(type=VERSION_DELETE).count(), 1)
         
     def tearDown(self):
         """Tears down the tests."""
@@ -233,6 +243,17 @@ class ReversionCustomRegistrationTest(TestCase):
     def testCustomSerializationFormat(self):
         """Ensures that the custom serialization format is used."""
         self.assertEquals(Version.objects.get_for_object(self.test)[0].serialized_data[0], "<");
+    
+    def testIgnoreDuplicates(self):
+        """Ensures that duplicate revisions can be ignores."""
+        self.assertEqual(len(Version.objects.get_for_object(self.test)), 3)
+        with reversion.revision:
+            self.test.save()
+        self.assertEqual(len(Version.objects.get_for_object(self.test)), 4)
+        with reversion.revision:
+            reversion.revision.ignore_duplicates = True
+            self.test.save()
+        self.assertEqual(len(Version.objects.get_for_object(self.test)), 4)
             
     def tearDown(self):
         """Tears down the tests."""
@@ -334,6 +355,25 @@ class ReversionRelatedTest(TestCase):
         # Ensure correct version.
         self.assertEqual(TestModel.objects.get().name, "test1.1")
         self.assertEqual(TestRelatedModel.objects.get().name, "related1.1")
+    
+    def testIgnoreDuplicates(self):
+        """Ensures the ignoring duplicates works across a foreign key."""
+        with reversion.revision:
+            test = TestModel.objects.create(name="test1.0")
+            related = TestRelatedModel.objects.create(name="related1.0", relation=test)
+        with reversion.revision:
+            test.name = "test1.1"
+            test.save()
+            related.name = "related1.1"
+            related.save()
+        self.assertEqual(len(Version.objects.get_for_object(test)), 2)
+        with reversion.revision:
+            test.save()
+        self.assertEqual(len(Version.objects.get_for_object(test)), 3)
+        with reversion.revision:
+            test.save()
+            reversion.revision.ignore_duplicates = True
+        self.assertEqual(len(Version.objects.get_for_object(test)), 3)
     
     def tearDown(self):
         """Tears down the tests."""
